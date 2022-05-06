@@ -1,0 +1,64 @@
+// Forcepoint Web Proxy Logs
+// Last Updated Date: April 29 2022
+//
+// This parser parses Syslog CEF events for Forcepoint Web Proxy logs.
+//
+//
+// Parser Notes:
+// 1. This parser assumes logs are collected into the CommonSecurityLog table.
+// 2. Disposition Code Reference Guide - http://www.websense.com/content/support/library/web/v76/siem/siem.pdf
+//    The guide is dated 2014, so may not be the most up to date version
+// 3. The following documentation has been used to map to ASIM Schemas:
+//    * https://docs.microsoft.com/en-us/azure/sentinel/network-normalization-schema
+//    * https://docs.microsoft.com/en-us/azure/sentinel/web-normalization-schema
+//
+// Usage Instruction : 
+// Paste below query in log analytics, click on Save button and select as Function from drop down by specifying function name and alias.
+// Functions usually takes 10-15 minutes to activate. You can then use function alias from any other queries (e.g. qcyber_ForcepointWebProxy | take 10).
+//
+//
+CommonSecurityLog
+| where DeviceVendor == 'Forcepoint' and DeviceProduct has "Security"
+// Convert Receipttime value 
+| extend SourceTime = unixtime_milliseconds_todatetime(tolong(ReceiptTime))
+// Extract values from AdditionalExtensions column - Username, Reason, LogRecordSource (which is not used) 
+| extend AdditionalExtensions = extract_all(@"(?P<key>\w+)=(?P<value>[a-zA-Z0-9-_:/@. ]+)", dynamic(["key","value"]), AdditionalExtensions)
+| mv-apply AdditionalExtensions on (
+    summarize AdditionalExtensionsExtracted = make_bag(pack(tostring(AdditionalExtensions[0]), AdditionalExtensions[1]))
+)
+// The following columns are custom fields from WSG - DispositionCode, Username, Reason, SourceUserName, Policy, Scan Duration
+| extend DispositionCode=tostring(DeviceCustomNumber1), 
+    DstBytes=ReceivedBytes,
+    DstHostname=DestinationHostName,
+    DstIpAddr=DestinationIP,
+    DstPortNumber=DestinationPort,
+    // Using the iff() to translate the original 'blocked' result to 'Deny' to map to ASIM supported value
+    DvcAction = iif (SimplifiedDeviceAction == 'blocked', 'Deny', SimplifiedDeviceAction),
+    // Storing the original values in DvcOriginalAction
+    DvcOriginalAction=SimplifiedDeviceAction,
+    DvcIpAddr=DeviceAddress,
+    HttpContentType=DeviceCustomString3, 
+    HttpRequestMethod=RequestMethod,
+    HttpUserAgent=RequestClientApplication,
+    NetworkApplicationProtocol=ApplicationProtocol,
+    // Forcepoint WSG Policy or policies
+    Policy=DeviceCustomString1,
+    // Forcepoint WSG reason associated with the request 
+    Reason=AdditionalExtensionsExtracted.reason,
+    SrcBytes=SentBytes,
+    SrcIpAddr=SourceIP,
+    SrcPortNumber=SourcePort,
+    UrlCategory=DeviceEventClassID, 
+    UserID=tostring(AdditionalExtensionsExtracted.loginID)
+// Is there value in including DeviceAction, SimplifiedDeviceAction and Activity 
+// when all three refer to whether or not something allowed or blocked?
+// Excluding LogSeverity as it is the code relating to DvcAction
+//
+| project TimeGenerated, SourceTime, UserID, Reason, UrlCategory, Computer, DstPortNumber, DstIpAddr, DvcIpAddr, SrcPortNumber, SrcIpAddr, DvcAction, DvcOriginalAction, NetworkApplicationProtocol, DstHostname, DstBytes, SrcBytes, RequestURL, HttpUserAgent, HttpRequestMethod, SourceUserName, Policy, DispositionCode, ScanDuration=DeviceCustomNumber2, HttpContentType
+//
+// Below section to be used to enrich Forcepoint WSG data with User Email Address from Watchlist
+//| extend NormalisedSourceUserName  = replace_regex(replace_string(SourceUserName,@"\",""),@".*:\/\/.* (.*)\/(.*)",@"CN=\2,\1")
+//| join kind=leftouter (_GetWatchlist('UserList')
+//| project UserID = tostring(UserID), Username = EmailAddress) on UserID
+//| project-away UserID1
+| take 10

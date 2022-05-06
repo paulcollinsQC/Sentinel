@@ -1,0 +1,77 @@
+// Forcepoint Web Security Gateway Logs
+// Last Updated Date: May 05 2022
+//
+// Notes:
+// 1. This parser assumes logs are collected into the CommonSecurityLog table.
+// 2. This function maps events to Azure Sentinel Information Model (ASIM) 
+//    * (https://docs.microsoft.com/azure/sentinel/normalization).
+//    * https://docs.microsoft.com/en-us/azure/sentinel/network-normalization-schema
+//    * https://docs.microsoft.com/en-us/azure/sentinel/web-normalization-schema
+// 3. Disposition Code Reference Guide - http://www.websense.com/content/support/library/web/v76/siem/siem.pdf
+//    The guide is dated 2014, so may not be the most up to date version
+//
+// Usage Instruction : 
+// Paste below query in log analytics, click on Save button and select as Function from drop down by specifying function name and alias.
+// Functions usually takes 10-15 minutes to activate. You can then use function alias from any other queries (e.g. qcyber_ForcepointWebProxy | take 10).
+//
+CommonSecurityLog
+| where DeviceVendor == 'Forcepoint' and DeviceProduct has "Security"
+| extend EventVendor = 'Forcepoint'
+| extend EventProduct = 'Web Security Gateway'
+//| extend EventSchemaVersion = 0.1
+//| extend EventCount =1
+// Convert Receipttime value - Original method 
+//| extend SourceTime = unixtime_milliseconds_todatetime(tolong(ReceiptTime))
+| extend EventTimeIngested = todatetime(ReceiptTime)
+// Extract values from AdditionalExtensions column - Username, Reason, LogRecordSource (which is not used) 
+| extend AdditionalExtensions = extract_all(@"(?P<key>\w+)=(?P<value>[a-zA-Z0-9-_:/@. ]+)", dynamic(["key","value"]), AdditionalExtensions)
+| mv-apply AdditionalExtensions on (
+    summarize AdditionalExtensionsExtracted = make_bag(pack(tostring(AdditionalExtensions[0]), AdditionalExtensions[1]))
+)
+// The following columns are custom fields from WSG - DispositionCode, Username, Reason, SourceUserName, Policy, ScanDuration
+| extend 
+    DstBytes=ReceivedBytes,
+    DstHostname=DestinationHostName,
+    DstIpAddr=DestinationIP,
+    DstPortNumber=DestinationPort,
+    // Using the iff() to translate the original 'blocked' result to 'Deny' to map to ASIM supported value
+    DvcAction = iif (SimplifiedDeviceAction == 'blocked', 'Deny', SimplifiedDeviceAction),
+    // Storing the original values in DvcOriginalAction
+    DvcOriginalAction=SimplifiedDeviceAction,
+    DvcIpAddr=DeviceAddress,
+    FWSGDispositionCode=tostring(DeviceCustomNumber1),
+    // Forcepoint WSG Policy or policies
+    FWSGPolicy=DeviceCustomString1,
+    // Forcepoint WSG reason associated with the request 
+    FWSGReason=AdditionalExtensionsExtracted.reason,
+    FWSGScanDuration=DeviceCustomNumber2, 
+    HttpContentType=DeviceCustomString3, 
+    HttpRequestMethod=RequestMethod,
+    HttpUserAgent=RequestClientApplication,
+    NetworkApplicationProtocol=ApplicationProtocol,
+    SrcBytes=SentBytes,
+    SrcIpAddr=SourceIP,
+    SrcPortNumber=SourcePort,
+    UrlCategory=DeviceEventClassID, 
+    UserID=tostring(AdditionalExtensionsExtracted.loginID)
+//
+// Normalise the SourceUserName into a Distinguished Name
+| extend NormalisedSourceUserName = replace_regex(replace_string(SourceUserName,@"\",""),@"([a-zA-Z0-9-_:/@.]+) (.*)(\/)(.*)",@"CN=\4,\2")
+// Below section to be used to enrich Forcepoint WSG data with User Email Address from Watchlist
+| join kind=leftouter (_GetWatchlist('UserList')
+| project UserID = tostring(UserID), Username = EmailAddress) on UserID
+| project-away UserID1
+//
+// Pack up the Vendor Specific Fields
+| extend packed = pack(DvcOriginalAction,FWSGDispositionCode)
+| evaluate bag_unpack(packed)
+
+//
+// Is there value in including DeviceAction, SimplifiedDeviceAction and Activity 
+// when all three refer to whether or not something allowed or blocked?
+// Excluding LogSeverity as it is the code relating to DvcAction
+//
+//| project TimeGenerated, SourceTime, UserID, Username, FWSGReason, UrlCategory, Computer, DstPortNumber, DstIpAddr, DvcIpAddr, SrcPortNumber, SrcIpAddr, DvcAction, DvcOriginalAction, NetworkApplicationProtocol, DstHostname, DstBytes, SrcBytes, RequestURL, HttpUserAgent, HttpRequestMethod, SourceUserName, NormalisedSourceUserName, FWSGPolicy, FWSGDispositionCode, FWSGScanDuration, HttpContentType
+| project TimeGenerated, SourceTime, UserID, Username, UrlCategory, Computer, DstPortNumber, DstIpAddr, DvcIpAddr, SrcPortNumber, SrcIpAddr, DvcAction, NetworkApplicationProtocol, DstHostname, DstBytes, SrcBytes, RequestURL, HttpUserAgent, HttpRequestMethod, NormalisedSourceUserName, HttpContentType, AdditionalFields
+// to be removed before final release
+| take 5

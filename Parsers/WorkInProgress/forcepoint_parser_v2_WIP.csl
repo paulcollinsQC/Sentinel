@@ -1,0 +1,28 @@
+// Forcepoint Web Proxy Logs
+// Last Updated Date: April 29 2022
+//
+// This parser parses Syslog CEF events for Forcepoint Web Proxy logs.
+//
+// Parser Notes:
+// 1. This parser assumes logs are collected into the CommonSecurityLog table.
+//
+// Usage Instruction : 
+// Paste below query in log analytics, click on Save button and select as Function from drop down by specifying function name and alias.
+// Functions usually takes 10-15 minutes to activate. You can then use function alias from any other queries (e.g. ForcepointWebProxy | take 10).
+//
+//
+
+CommonSecurityLog
+| where DeviceVendor == 'Forcepoint' and DeviceProduct has "Security"
+// Convert Receipttime value 
+| extend SourceTime = unixtime_milliseconds_todatetime(tolong(ReceiptTime))
+// Extract Fields from AdditionalExtensions column
+| extend AdditionalExtensions = extract_all(@"(?P<key>\w+)=(?P<value>[a-zA-Z0-9-_:/@. ]+)", dynamic(["key","value"]), AdditionalExtensions)
+| mv-apply AdditionalExtensions on (
+    summarize AdditionalExtensionsExtracted = make_bag(pack(tostring(AdditionalExtensions[0]), AdditionalExtensions[1]))
+)
+//| extend policies2 = extract_all(@"(?P<optionalkey>(?P<key>[a-zA-Z0-9-_:/@. ]+)\*\*)?(?P<value>[a-zA-Z0-9-_:/@. ]+)", dynamic([2,3]), DeviceCustomString1)
+| extend policies = extract_all(@"(?P<optionalkey>(?P<key>[a-zA-Z0-9-_:/@. ]+)\*\*)?(?P<value>[a-zA-Z0-9-_:/@. ]+)", DeviceCustomString1)
+| project policies//, policies2
+//| project TimeGenerated, SourceTime, Username=AdditionalExtensionsExtracted.loginID, Reason=AdditionalExtensionsExtracted.reason, DeviceEventClassID, LogSeverity, DeviceAction, SimplifiedDeviceAction, Computer, DestinationPort, DestinationIP, DeviceAddress, SourcePort, SourceIP, Activity, ApplicationProtocol, DestinationHostName, ReceivedBytes, SentBytes, RequestURL, RequestClientApplication, RequestMethod, SourceUserName, Policy=DeviceCustomString1, ['Disposition Code']=DeviceCustomNumber1, ['Scan Duration']=DeviceCustomNumber2
+| take 20
