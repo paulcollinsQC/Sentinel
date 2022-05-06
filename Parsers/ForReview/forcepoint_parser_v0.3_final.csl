@@ -1,5 +1,30 @@
 // Title:           Forcepoint Web Security Gateway Parser
 // Author:          Quorum Cyber
+// Version:         0.3
+// Last Updated:    May 05 2022
+// Comment:         Initial Release
+//                  Removed Watchlist Lookup
+//                  Using Parse statement on AdditionalExtensions
+//
+// DESCRIPTION:
+// This parser takes raw Forcepoint Web Security Gateway logs and parses the data into a normalized schema
+//
+// USAGE: 
+// 1. Open Log Analytics/Azure Sentinel Logs blade. Copy the query below and paste into the Logs query window.
+// 2. Click on Save button and select "as Function" from drop down by specifying function name.
+// 3. Functions usually takes 10-15 minutes to activate. You can then use function alias from any other queries (e.g. qcyber_ForcepointWebProxy | take 10).
+//
+// NOTES:
+// 1. This parser assumes logs are collected into the CommonSecurityLog table.
+// 2. This function maps events to Azure Sentinel Information Model (ASIM) 
+//    * (https://docs.microsoft.com/azure/sentinel/normalization).
+//    * https://docs.microsoft.com/en-us/azure/sentinel/network-normalization-schema
+//    * https://docs.microsoft.com/en-us/azure/sentinel/web-normalization-schema
+// 3. Disposition Code Reference Guide - http://www.websense.com/content/support/library/web/v76/siem/siem.pdf
+//    The guide is dated 2014, so may not be the most up to date version
+//
+// Title:           Forcepoint Web Security Gateway Parser
+// Author:          Quorum Cyber
 // Version:         0.1
 // Last Updated:    May 05 2022
 // Comment:         Initial Release
