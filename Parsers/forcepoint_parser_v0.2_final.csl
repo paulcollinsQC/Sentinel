@@ -1,0 +1,89 @@
+// Title:           Forcepoint Web Security Gateway Parser
+// Author:          Quorum Cyber
+// Version:         0.2 Final
+// Last Updated:    May 05 2022
+// Comment:         Removed Watchlist Lookup
+//
+// DESCRIPTION:
+// This parser takes raw Forcepoint Web Security Gateway logs and parses the data into a normalized schema
+//
+// USAGE: 
+// 1. Open Log Analytics/Azure Sentinel Logs blade. Copy the query below and paste into the Logs query window.
+// 2. Click on Save button and select "as Function" from drop down by specifying function name.
+// 3. Functions usually takes 10-15 minutes to activate. You can then use function alias from any other queries (e.g. qcyber_ForcepointWebProxy | take 10).
+//
+// NOTES:
+// 1. This parser assumes logs are collected into the CommonSecurityLog table.
+// 2. This function maps events to Azure Sentinel Information Model (ASIM) 
+//    * (https://docs.microsoft.com/azure/sentinel/normalization).
+//    * https://docs.microsoft.com/en-us/azure/sentinel/network-normalization-schema
+//    * https://docs.microsoft.com/en-us/azure/sentinel/web-normalization-schema
+// 3. Disposition Code Reference Guide - http://www.websense.com/content/support/library/web/v76/siem/siem.pdf
+//    The guide is dated 2014, so may not be the most up to date version
+//
+CommonSecurityLog
+| where DeviceVendor == 'Forcepoint' and DeviceProduct has "Security"
+| extend EventVendor = 'Forcepoint'
+| extend EventProduct = 'Web Security Gateway'
+//| extend EventSchemaVersion = 0.1
+//| extend EventCount = 1
+| extend EventTimeIngested = unixtime_milliseconds_todatetime(tolong(ReceiptTime))
+// The following columns are custom fields from FWSG - DispositionCode, Policy, ScanDuration
+| extend packed = pack(DeviceCustomNumber1Label, tostring(DeviceCustomNumber1)
+                     , DeviceCustomNumber2Label, DeviceCustomNumber2
+                     , DeviceCustomNumber3Label, DeviceCustomNumber3
+                     , DeviceCustomString1Label, DeviceCustomString1
+                     , DeviceCustomString2Label, DeviceCustomString2
+                     , DeviceCustomString3Label, DeviceCustomString3)
+| evaluate bag_unpack(packed)
+| mv-apply AdditionalFields = extract_all(@"(?P<key>\w+)=(?P<value>[a-zA-Z0-9-_:/@. ]+)", dynamic(["key","value"]), AdditionalExtensions) on (
+    project packedAF = pack(tostring(AdditionalFields[0]), tostring(AdditionalFields[1]))
+    | summarize AdditionalFieldsbag = make_bag(packedAF)
+)
+| evaluate bag_unpack(AdditionalFieldsbag)
+// Using the iff() to translate the original 'blocked' result to 'Deny' to map to ASIM supported value
+| extend DvcAction = iif(SimplifiedDeviceAction == 'blocked', 'Deny', SimplifiedDeviceAction)
+| project-rename EventProductVersion=DeviceVersion
+    , DstBytes=ReceivedBytes
+    , DstHostname=DestinationHostName
+    , DstIpAddr=DestinationIP
+    , DstPortNumber=DestinationPort
+    , DstNatPortNumber=DestinationTranslatedPort
+    , DvcOriginalAction=SimplifiedDeviceAction
+    , DvcIpAddr=DeviceAddress
+    , EventResourceId=DeviceEventClassID
+    , EventResult=DvcAction
+    , EventResultsDetails=reason
+    , EventSeverity=LogSeverity
+    , HttpRequestMethod=RequestMethod
+    , HttpUserAgent=RequestClientApplication
+    , HttpContentType=ContentType
+    , NetworkApplicationProtocol=ApplicationProtocol
+    , SrcBytes=SentBytes
+    , SrcIpAddr=SourceIP
+    , SrcPortNumber=SourcePort
+    , SrcZone=logRecordSource
+    , UserID = loginID
+    , Url=RequestURL
+    , UrlCategory=DynCat
+// Normalise the SourceUserName into a Distinguished Name
+| extend SrcUserNameDN = replace_regex(replace_string(SourceUserName,@"\",""),@"([a-zA-Z0-9-_:/@.]+) (.*)(\/)(.*)",@"CN=\4,\2")
+| project-away AdditionalExtensions
+    , DeviceAction
+    , DeviceCustomNumber1
+    , DeviceCustomNumber1Label
+    , DeviceCustomNumber2
+    , DeviceCustomNumber2Label
+    , DeviceCustomString1
+    , DeviceCustomString1Label
+    , DeviceCustomString2
+    , DeviceCustomString2Label
+    , DeviceCustomString3
+    , DeviceCustomString3Label
+    , DeviceProduct
+    , DeviceVendor
+    , ReceiptTime
+    , SourceSystem
+    , SourceUserName
+    , TenantId
+    , Type
