@@ -1,0 +1,101 @@
+Parser:
+  Title: ASIM aligned parser for Forcepoint Web Security Gateway
+  Version: '0.1'
+  LastUpdated: May 13, 2022
+Product:
+  Name: Forcepoint Web Security Gateway
+Normalization:
+  Schema: WebSession
+  Version: '0.2.3'
+  Schema: NetworkSession
+  Version: '0.2.2'
+References:
+- Title: ASIM WebSession Schema
+  Link: https://aka.ms/ASimWebSessionDoc
+  Title: ASIM Network Session Schema
+  Link: https://aka.ms/ASimNetworkSessionDoc
+- Title: ASIM
+  Link: https:/aka.ms/AboutASIM
+- Title: Websense Security Information Event Management (SIEM) Solutions
+  Link: http://www.websense.com/content/support/library/web/v76/siem/siem.pdf
+Description: |
+  This ASIM parser supports filtering and normalizing Forcepoint Web Security Gateway logs produced by the Microsoft Sentinel Common Event Format (CEF) Connector to the ASIM normalized schema.
+ParserName: qcyberForcepoint_WebSecurityGateway
+EquivalentBuiltInParser: 
+ParserParams:
+  - Name: starttime
+    Type: datetime
+    Default: datetime(null)
+  - Name: endtime
+    Type: datetime
+    Default: datetime(null)
+  - Name: disabled
+    Type: bool
+    Default: false
+ParserQuery: |
+  let qcyberForcepoint_WebSecurityGateway = (
+    starttime:datetime=datetime(null), 
+    endtime:datetime=datetime(null),
+    disabled:bool=false
+   ){
+  CommonSecurityLog | where not(disabled)
+  | where DeviceVendor == 'Forcepoint' and DeviceProduct has "Security"
+  | extend EventVendor = 'Forcepoint'
+  | extend EventProduct = 'Web Security Gateway'
+  //| extend EventSchemaVersion = 0.1
+  //| extend EventCount = 1
+  | extend EventTimeIngested = unixtime_milliseconds_todatetime(tolong(ReceiptTime))
+  // The following columns are custom fields from Forcepoint Web Security Gateway Logs - DispositionCode, Policy, ScanDuration
+  | extend packed = pack(DeviceCustomNumber1Label, tostring(DeviceCustomNumber1)
+                      , DeviceCustomNumber2Label, DeviceCustomNumber2
+                      , DeviceCustomNumber3Label, DeviceCustomNumber3
+                      , DeviceCustomString1Label, DeviceCustomString1
+                      , DeviceCustomString2Label, DeviceCustomString2
+                      , DeviceCustomString3Label, DeviceCustomString3)
+  | evaluate bag_unpack(packed)
+  | parse AdditionalExtensions with "loginID=" UserID:string ";reason=" EventResultsDetails:string ";logRecordSource=" SrcZone:string
+  // Using the iff() to translate the original 'blocked' result to 'Deny' to map to ASIM supported value
+  | extend DvcAction = iif(SimplifiedDeviceAction == 'blocked', 'Deny', SimplifiedDeviceAction)
+  | project-rename EventProductVersion=DeviceVersion
+      , DstBytes=ReceivedBytes
+      , DstHostname=DestinationHostName
+      , DstIpAddr=DestinationIP
+      , DstPortNumber=DestinationPort
+      , DstNatPortNumber=DestinationTranslatedPort
+      , DvcOriginalAction=SimplifiedDeviceAction
+      , DvcIpAddr=DeviceAddress
+      , EventResourceId=DeviceEventClassID
+      , EventResult=DvcAction
+      , EventSeverity=LogSeverity
+      , HttpRequestMethod=RequestMethod
+      , HttpUserAgent=RequestClientApplication
+      , HttpContentType=ContentType
+      , NetworkApplicationProtocol=ApplicationProtocol
+      , SrcBytes=SentBytes
+      , SrcIpAddr=SourceIP
+      , SrcPortNumber=SourcePort
+      , Url=RequestURL
+      , UrlCategory=DynCat
+  // Normalise the SourceUserName into a Distinguished Name
+  | extend SrcUserNameDN = replace_regex(replace_string(SourceUserName,@"\",""),@"([a-zA-Z0-9-_:/@.]+) (.*)(\/)(.*)",@"CN=\4,\2")
+  | project-away AdditionalExtensions
+      , DeviceAction
+      , DeviceCustomNumber1
+      , DeviceCustomNumber1Label
+      , DeviceCustomNumber2
+      , DeviceCustomNumber2Label
+      , DeviceCustomString1
+      , DeviceCustomString1Label
+      , DeviceCustomString2
+      , DeviceCustomString2Label
+      , DeviceCustomString3
+      , DeviceCustomString3Label
+      , DeviceProduct
+      , DeviceVendor
+      , ReceiptTime
+      , SourceSystem
+      , SourceUserName
+      , TenantId
+      , Type
+  };
+  qcyberForcepoint_WebSecurityGateway (starttime, endtime, disabled)
