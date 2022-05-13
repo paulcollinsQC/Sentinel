@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-08-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "Workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "The Microsoft Sentinel workspace into which the function will be deployed. Has to be in the selected Resource Group."
+      }
+    },
+    "WorkspaceRegion": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "The region of the selected workspace. The default value will use the Region selection above."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2017-03-15-preview",
+      "name": "[parameters('Workspace')]",
+      "location": "[parameters('WorkspaceRegion')]",
+      "resources": [
+        {
+          "type": "savedSearches",
+          "apiVersion": "2020-08-01",
+          "name": "qcyberForcepoint_WebSecurityGateway",
+          "dependsOn": [
+            "[concat('Microsoft.OperationalInsights/workspaces/', parameters('Workspace'))]"
+          ],
+          "properties": {
+            "etag": "*",
+            "displayName": "ASIM aligned parser for Forcepoint Web Security Gateway",
+            "category": "ASIM",
+            "FunctionAlias": "qcyberForcepoint_WebSecurityGateway",
+            "query": "let qcyberForcepoint_WebSecurityGateway = (\n  starttime:datetime=datetime(null), \n  endtime:datetime=datetime(null),\n  disabled:bool=false\n ){\nCommonSecurityLog | where not(disabled)\n| where DeviceVendor == 'Forcepoint' and DeviceProduct has \"Security\"\n| extend EventVendor = 'Forcepoint'\n| extend EventProduct = 'Web Security Gateway'\n//| extend EventSchemaVersion = 0.1\n//| extend EventCount = 1\n| extend EventTimeIngested = unixtime_milliseconds_todatetime(tolong(ReceiptTime))\n// The following columns are custom fields from Forcepoint Web Security Gateway Logs - DispositionCode, Policy, ScanDuration\n| extend packed = pack(DeviceCustomNumber1Label, tostring(DeviceCustomNumber1)\n                    , DeviceCustomNumber2Label, DeviceCustomNumber2\n                    , DeviceCustomNumber3Label, DeviceCustomNumber3\n                    , DeviceCustomString1Label, DeviceCustomString1\n                    , DeviceCustomString2Label, DeviceCustomString2\n                    , DeviceCustomString3Label, DeviceCustomString3)\n| evaluate bag_unpack(packed)\n| parse AdditionalExtensions with \"loginID=\" UserID:string \";reason=\" EventResultsDetails:string \";logRecordSource=\" SrcZone:string\n// Using the iff() to translate the original 'blocked' result to 'Deny' to map to ASIM supported value\n| extend DvcAction = iif(SimplifiedDeviceAction == 'blocked', 'Deny', SimplifiedDeviceAction)\n| project-rename EventProductVersion=DeviceVersion\n    , DstBytes=ReceivedBytes\n    , DstHostname=DestinationHostName\n    , DstIpAddr=DestinationIP\n    , DstPortNumber=DestinationPort\n    , DstNatPortNumber=DestinationTranslatedPort\n    , DvcOriginalAction=SimplifiedDeviceAction\n    , DvcIpAddr=DeviceAddress\n    , EventResourceId=DeviceEventClassID\n    , EventResult=DvcAction\n    , EventSeverity=LogSeverity\n    , HttpRequestMethod=RequestMethod\n    , HttpUserAgent=RequestClientApplication\n    , HttpContentType=ContentType\n    , NetworkApplicationProtocol=ApplicationProtocol\n    , SrcBytes=SentBytes\n    , SrcIpAddr=SourceIP\n    , SrcPortNumber=SourcePort\n    , Url=RequestURL\n    , UrlCategory=DynCat\n// Normalise the SourceUserName into a Distinguished Name\n| extend SrcUserNameDN = replace_regex(replace_string(SourceUserName,@\"\\\",\"\"),@\"([a-zA-Z0-9-_:/@.]+) (.*)(\\/)(.*)\",@\"CN=\\4,\\2\")\n| project-away AdditionalExtensions\n    , DeviceAction\n    , DeviceCustomNumber1\n    , DeviceCustomNumber1Label\n    , DeviceCustomNumber2\n    , DeviceCustomNumber2Label\n    , DeviceCustomString1\n    , DeviceCustomString1Label\n    , DeviceCustomString2\n    , DeviceCustomString2Label\n    , DeviceCustomString3\n    , DeviceCustomString3Label\n    , DeviceProduct\n    , DeviceVendor\n    , ReceiptTime\n    , SourceSystem\n    , SourceUserName\n    , TenantId\n    , Type\n};\nqcyberForcepoint_WebSecurityGateway (starttime, endtime, disabled)",
+            "version": 1,
+            "functionParameters": "starttime:datetime=datetime(null),endtime:datetime=datetime(null),disabled:bool=False"
+          }
+        }
+      ]
+    }
+  ]
+}
